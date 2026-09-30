@@ -2,14 +2,17 @@
    Network-first for HTML/JS/CSS so deploys land immediately,
    cache-first for images the shell needs, never cache Supabase. */
 
-const VERSION = 'reflect-portal-v2';
+const VERSION = 'reflect-portal-v3';
 const SHELL = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './config.js',
-  './manifest.json'
+  './manifest.json',
+  './icon.png',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
 self.addEventListener('install', e => {

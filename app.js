@@ -81,13 +81,42 @@ const auth = {
     return r.data && r.data.length ? r.data[0] : null;
   },
 
+  /* Enter the signed-in flow: resolve which account this user belongs
+     to and either show the browse view or the "not authorized" screen. */
+  async _enterSignedIn() {
+    const ctx = await auth.resolveContext();
+    if (!ctx || !ctx.account_id) {
+      ui.show('view-denied');
+      return;
+    }
+    auth._accountCtx = ctx;
+    document.getElementById('header-account').classList.remove('hide');
+    document.getElementById('header-account-name').textContent = ctx.business_name || '';
+    ui.show('view-browse');
+    await portal.load();
+  },
+
   async boot() {
     const params = new URLSearchParams(location.hash.slice(1));
     const hasAuthPayload = params.has('access_token') || params.has('error');
+
     if (hasAuthPayload) {
+      /* Magic-link redirect. Show the "signing you in" splash while
+         supabase-js parses the hash and finalizes the session. Waiting
+         for the SIGNED_IN event is bulletproof — no hardcoded timeout
+         to guess right on every device. */
       ui.show('view-callback');
-      /* supabase-js parses the hash automatically on load; wait one tick. */
-      await new Promise(r => setTimeout(r, 100));
+      await new Promise((resolve) => {
+        const { data: sub } = sb.auth.onAuthStateChange((event, session) => {
+          if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+            try { sub.subscription.unsubscribe(); } catch (_) {}
+            resolve(session);
+          }
+        });
+        /* Safety net: if the hash was invalid and no event fires within
+           4 s, fall through so we don't hang on "Signing you in…". */
+        setTimeout(() => { try { sub.subscription.unsubscribe(); } catch (_) {} resolve(null); }, 4000);
+      });
       history.replaceState(null, '', location.pathname);
     }
 
@@ -97,26 +126,36 @@ const auth = {
       return;
     }
 
-    const ctx = await auth.resolveContext();
-    if (!ctx || !ctx.account_id) {
-      ui.show('view-denied');
-      return;
-    }
-
-    auth._accountCtx = ctx;
-    document.getElementById('header-account').classList.remove('hide');
-    document.getElementById('header-account-name').textContent = ctx.business_name || '';
-    ui.show('view-browse');
-    await portal.load();
+    await auth._enterSignedIn();
   }
 };
 
 const portal = {
   _files: [],
 
+  _bindAssetActions() {
+    /* Attach the delegated click handler exactly once. Reads the
+       action + path + name + category from the target button's
+       data-attributes and dispatches. Immune to filename special
+       characters. */
+    if (portal._actionsBound) return;
+    portal._actionsBound = true;
+    document.getElementById('browse-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const path = btn.dataset.path;
+      const name = btn.dataset.name;
+      const category = btn.dataset.category;
+      if (action === 'preview') portal.preview(path, name, category);
+      else if (action === 'download') portal.download(path, name);
+    });
+  },
+
   async load() {
     const wrap = document.getElementById('browse-list');
     wrap.innerHTML = '<div class="muted">Loading…</div>';
+    portal._bindAssetActions();
     try {
       const results = await Promise.all(
         CFG.PORTAL_CATEGORIES.map(async (cat) => {
@@ -192,6 +231,10 @@ const portal = {
       thumb = `<div class="placeholder">📎</div>`;
     }
 
+    /* Buttons store their asset ref in data-* attributes. Handler is
+       attached ONCE via delegation in portal.load() so filename special
+       characters (apostrophes, quotes, backslashes) can't break the
+       button or inject anything into an inline onclick. */
     return `<div class="asset-card">
       <div class="asset-thumb">${thumb}</div>
       <div class="asset-meta">
@@ -199,8 +242,8 @@ const portal = {
         <span class="asset-sub">${esc(f.category)}${kb ? ' · ' + esc(kb) : ''}</span>
       </div>
       <div class="asset-actions">
-        <button class="ghost" onclick="portal.preview('${esc(f.path)}', '${esc(f.name)}', '${esc(f.category)}')">Preview</button>
-        <button class="primary" onclick="portal.download('${esc(f.path)}', '${esc(f.name)}')">Download</button>
+        <button class="ghost" data-action="preview" data-path="${esc(f.path)}" data-name="${esc(f.name)}" data-category="${esc(f.category)}">Preview</button>
+        <button class="primary" data-action="download" data-path="${esc(f.path)}" data-name="${esc(f.name)}">Download</button>
       </div>
     </div>`;
   },
