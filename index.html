@@ -135,6 +135,18 @@
   </div>
 </section>
 
+<!-- ===================== PREVIEW MODAL ===================== -->
+<div id="preview-modal" class="modal hide" onclick="portal.closePreview(event)">
+  <div class="modal-body" onclick="event.stopPropagation()">
+    <button class="modal-close" onclick="portal.closePreview()" aria-label="Close">&times;</button>
+    <div id="preview-content"></div>
+    <div class="modal-actions">
+      <button class="ghost" onclick="portal.closePreview()">Close</button>
+      <button class="primary" id="preview-download">Download</button>
+    </div>
+  </div>
+</div>
+
 <footer class="footer">
   <span class="muted">&copy; 2026 The Reflect Co · <a href="https://thereflectco.com">thereflectco.com</a> · <a href="mailto:support@thereflectco.com">support@thereflectco.com</a></span>
 </footer>

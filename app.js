@@ -199,15 +199,66 @@ const portal = {
         <span class="asset-sub">${esc(f.category)}${kb ? ' · ' + esc(kb) : ''}</span>
       </div>
       <div class="asset-actions">
-        ${isVideo ? `<button class="ghost" onclick="portal.preview('${esc(f.path)}')">Preview</button>` : ''}
+        <button class="ghost" onclick="portal.preview('${esc(f.path)}', '${esc(f.name)}', '${esc(f.category)}')">Preview</button>
         <button class="primary" onclick="portal.download('${esc(f.path)}', '${esc(f.name)}')">Download</button>
       </div>
     </div>`;
   },
 
-  preview(path) {
+  /* Open the preview modal for an asset. Images render as <img>, videos
+     as a playable <video controls>, other file types fall back to an
+     icon + note prompting the download button. */
+  preview(path, name, category) {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
+    const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
     const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
-    window.open(url, '_blank', 'noopener');
+    const content = document.getElementById('preview-content');
+
+    let media;
+    if (isImage) {
+      media = `<img src="${esc(url)}" alt="${esc(name)}"/>`;
+    } else if (isVideo) {
+      media = `<video src="${esc(url)}" controls autoplay playsinline></video>`;
+    } else {
+      media = `<div class="preview-fallback">
+        <div class="placeholder">📎</div>
+        <p class="muted">Preview isn't available for this file type. Use Download to save it.</p>
+      </div>`;
+    }
+    content.innerHTML = `${media}
+      <div class="preview-meta">
+        <div class="preview-name">${esc(name)}</div>
+        ${esc(category)}
+      </div>`;
+
+    const dlBtn = document.getElementById('preview-download');
+    dlBtn.onclick = () => portal.download(path, name);
+
+    const modal = document.getElementById('preview-modal');
+    modal.classList.remove('hide');
+    document.body.style.overflow = 'hidden';
+
+    /* Close on Escape */
+    portal._escHandler = (e) => { if (e.key === 'Escape') portal.closePreview(); };
+    document.addEventListener('keydown', portal._escHandler);
+  },
+
+  closePreview(e) {
+    /* Only close on backdrop clicks or the close button — not on clicks
+       inside the modal body (those are stopped in the onclick attribute). */
+    if (e && e.target && e.target.id !== 'preview-modal' && e.target.tagName !== 'BUTTON') return;
+    const modal = document.getElementById('preview-modal');
+    modal.classList.add('hide');
+    /* Stop any playing video so audio doesn't linger */
+    const vid = document.querySelector('#preview-content video');
+    if (vid) { try { vid.pause(); } catch (_) {} }
+    document.getElementById('preview-content').innerHTML = '';
+    document.body.style.overflow = '';
+    if (portal._escHandler) {
+      document.removeEventListener('keydown', portal._escHandler);
+      portal._escHandler = null;
+    }
   },
 
   async download(path, filename) {

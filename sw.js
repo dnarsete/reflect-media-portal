@@ -2,7 +2,7 @@
    Network-first for HTML/JS/CSS so deploys land immediately,
    cache-first for images the shell needs, never cache Supabase. */
 
-const VERSION = 'reflect-portal-v1';
+const VERSION = 'reflect-portal-v2';
 const SHELL = [
   './',
   './index.html',
