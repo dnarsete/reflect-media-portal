@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>The Reflect Co — Media Portal</title>
+<meta name="description" content="Download social media assets and videos for your Reflect Co account." />
+<meta name="theme-color" content="#0d2945" />
+
+<!-- Clickjacking defense: refuse to render inside an iframe. -->
+<script>
+  if (window.top !== window.self) {
+    document.documentElement.style.display = 'none';
+    try { window.top.location = window.self.location.href; } catch (_) {}
+  }
+</script>
+
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data: blob: https://*.supabase.co; media-src 'self' blob: https://*.supabase.co; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'" />
+<meta name="referrer" content="strict-origin-when-cross-origin" />
+
+<link rel="preconnect" href="https://clzpkjssxvmgvgloxehk.supabase.co" crossorigin />
+<link rel="dns-prefetch" href="https://clzpkjssxvmgvgloxehk.supabase.co" />
+
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" type="image/png" href="icon.png" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Reflect Media" />
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"
+        integrity="sha384-dGnL7r9uccC9TdSdE05clTJ6esxMU42XBQ1/BWLzKQOBi7qR1aCMRIi0LzUmexIg"
+        crossorigin="anonymous"></script>
+<script src="config.js"></script>
+<script>
+  /* SW auto-update — same pattern as the CRM so deploys land within one
+     page load without manual DevTools resets. */
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+        reg.update().catch(() => {});
+        reg.addEventListener('updatefound', () => {
+          const sw = reg.installing;
+          if (!sw) return;
+          sw.addEventListener('statechange', () => {
+            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+              try { sw.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
+            }
+          });
+        });
+        let reloading = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (reloading) return;
+          reloading = true;
+          window.location.reload();
+        });
+      } catch (err) { console.warn('SW register failed', err); }
+    });
+  }
+</script>
+</head>
+<body>
+
+<!-- ===================== HEADER ===================== -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">◆</span>
+    <span class="brand-text">The Reflect Co</span>
+    <span class="brand-sub">Media Portal</span>
+  </div>
+  <div id="header-account" class="header-account hide">
+    <span id="header-account-name" class="muted"></span>
+    <button class="link-btn" onclick="auth.signOut()">Sign out</button>
+  </div>
+</header>
+
+<!-- ===================== SIGN IN ===================== -->
+<section id="view-signin" class="view">
+  <div class="wrap-narrow">
+    <div class="card">
+      <h1>Sign in to access your media library</h1>
+      <p class="muted">Enter the email address on file for your account. We'll send you a one-click sign-in link.</p>
+      <form onsubmit="event.preventDefault(); auth.sendMagicLink();">
+        <label for="signin-email">Email address</label>
+        <input id="signin-email" type="email" autocomplete="email" required placeholder="you@yourbusiness.com"/>
+        <button type="submit" class="primary" id="signin-submit">Send sign-in link</button>
+      </form>
+      <div id="signin-msg" class="signin-msg hide"></div>
+      <div class="signin-help muted">
+        Trouble signing in? Ask your Reflect Co rep to authorize your email, or contact <a href="mailto:hello@thereflectco.com">hello@thereflectco.com</a>.
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== MAGIC LINK LANDING ===================== -->
+<section id="view-callback" class="view hide">
+  <div class="wrap-narrow">
+    <div class="card">
+      <h1>Signing you in…</h1>
+      <p class="muted">One moment.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== BROWSE ===================== -->
+<section id="view-browse" class="view hide">
+  <div class="wrap">
+    <div class="browse-head">
+      <h1 id="browse-title">Media library</h1>
+      <div class="browse-controls">
+        <input id="browse-search" placeholder="Search assets…" oninput="portal.render()"/>
+        <select id="browse-category" onchange="portal.render()">
+          <option value="">All categories</option>
+        </select>
+      </div>
+    </div>
+    <div id="browse-list" class="asset-grid">
+      <div class="muted">Loading…</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ACCESS DENIED ===================== -->
+<section id="view-denied" class="view hide">
+  <div class="wrap-narrow">
+    <div class="card">
+      <h1>Not authorized</h1>
+      <p>This email address isn't on your account's authorized list.</p>
+      <p class="muted">Ask your Reflect Co rep to add your email, or use the email address they have on file for your account.</p>
+      <button class="ghost" onclick="auth.signOut()">Try a different email</button>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <span class="muted">&copy; The Reflect Co · <a href="https://thereflectco.com">thereflectco.com</a> · <a href="mailto:hello@thereflectco.com">hello@thereflectco.com</a></span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
