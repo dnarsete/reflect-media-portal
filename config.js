@@ -1,7 +1,6 @@
-/* Shared with the CRM (dnarsete.github.io/reflect-co-crm) — same Supabase
-   project, same materials storage bucket, isolated auth session by origin.
-   Portal users are locked out of every CRM table by existing RLS policies
-   (they have no admin role, no rep_id assignment). */
+/* Same Supabase project the CRM uses. Materials storage bucket is
+   shared. Portal auth sessions are per-origin, so signing into the
+   portal never touches the CRM session on dnarsete.github.io. */
 window.REFLECT_PORTAL_CONFIG = {
   SUPABASE_URL: 'https://clzpkjssxvmgvgloxehk.supabase.co',
   SUPABASE_KEY: 'sb_publishable_AVb4KY5cTUdtMbltuiRPUg_YOdfNVvi',

@@ -7,7 +7,7 @@
 <meta name="description" content="Download social media assets and videos for your Reflect Co account." />
 <meta name="theme-color" content="#0d2945" />
 
-<!-- Clickjacking defense: refuse to render inside an iframe. -->
+<!-- Clickjacking defense: refuse to render inside a frame. -->
 <script>
   if (window.top !== window.self) {
     document.documentElement.style.display = 'none';
@@ -29,13 +29,15 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Reflect Media" />
 <link rel="stylesheet" href="styles.css" />
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.0/dist/umd/supabase.js"
         integrity="sha384-dGnL7r9uccC9TdSdE05clTJ6esxMU42XBQ1/BWLzKQOBi7qR1aCMRIi0LzUmexIg"
         crossorigin="anonymous"></script>
 <script src="config.js"></script>
+
 <script>
-  /* SW auto-update — same pattern as the CRM so deploys land within one
-     page load without manual DevTools resets. */
+  /* SW auto-update — same pattern the CRM uses. Every deploy lands
+     on the next page load, no manual DevTools resets. */
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', async () => {
       try {
@@ -63,7 +65,6 @@
 </head>
 <body>
 
-<!-- ===================== HEADER ===================== -->
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark">◆</span>
@@ -72,30 +73,28 @@
   </div>
   <div id="header-account" class="header-account hide">
     <span id="header-account-name" class="muted"></span>
-    <button class="link-btn" onclick="auth.signOut()">Sign out</button>
+    <button class="link-btn" onclick="portalAuth.signOut()">Sign out</button>
   </div>
 </header>
 
-<!-- ===================== SIGN IN ===================== -->
 <section id="view-signin" class="view">
   <div class="wrap-narrow">
     <div class="card">
-      <h1>Sign in to access your media library</h1>
-      <p class="muted">Enter the email address on file for your account. We'll send you a one-click sign-in link.</p>
-      <form onsubmit="event.preventDefault(); auth.sendMagicLink();">
+      <h1>Sign in to your media library</h1>
+      <p class="muted">Enter the email your Reflect Co rep authorized. We'll email you a one-click sign-in link.</p>
+      <form onsubmit="event.preventDefault(); portalAuth.sendMagicLink();">
         <label for="signin-email">Email address</label>
         <input id="signin-email" type="email" autocomplete="email" required placeholder="you@yourbusiness.com"/>
         <button type="submit" class="primary" id="signin-submit">Send sign-in link</button>
       </form>
       <div id="signin-msg" class="signin-msg hide"></div>
       <div class="signin-help muted">
-        Trouble signing in? Ask your Reflect Co rep to authorize your email, or contact <a href="mailto:support@thereflectco.com">support@thereflectco.com</a>.
+        Not on the list yet? Ask your Reflect Co rep to add your email, or contact <a href="mailto:support@thereflectco.com">support@thereflectco.com</a>.
       </div>
     </div>
   </div>
 </section>
 
-<!-- ===================== MAGIC LINK LANDING ===================== -->
 <section id="view-callback" class="view hide">
   <div class="wrap-narrow">
     <div class="card">
@@ -105,14 +104,13 @@
   </div>
 </section>
 
-<!-- ===================== BROWSE ===================== -->
 <section id="view-browse" class="view hide">
   <div class="wrap">
     <div class="browse-head">
       <h1 id="browse-title">Media library</h1>
       <div class="browse-controls">
-        <input id="browse-search" placeholder="Search assets…" oninput="portal.render()"/>
-        <select id="browse-category" onchange="portal.render()">
+        <input id="browse-search" placeholder="Search assets…" oninput="portalBrowse.render()"/>
+        <select id="browse-category" onchange="portalBrowse.render()">
           <option value="">All categories</option>
         </select>
       </div>
@@ -123,25 +121,23 @@
   </div>
 </section>
 
-<!-- ===================== ACCESS DENIED ===================== -->
 <section id="view-denied" class="view hide">
   <div class="wrap-narrow">
     <div class="card">
       <h1>Not authorized</h1>
       <p>This email address isn't on your account's authorized list.</p>
-      <p class="muted">Ask your Reflect Co rep to add your email, or use the email address they have on file for your account.</p>
-      <button class="ghost" onclick="auth.signOut()">Try a different email</button>
+      <p class="muted">Ask your Reflect Co rep to add your email, or use the email address they have on file for you.</p>
+      <button class="ghost" onclick="portalAuth.signOut()">Try a different email</button>
     </div>
   </div>
 </section>
 
-<!-- ===================== PREVIEW MODAL ===================== -->
-<div id="preview-modal" class="modal hide" onclick="portal.closePreview(event)">
+<div id="preview-modal" class="modal hide" onclick="portalBrowse.closePreview(event)">
   <div class="modal-body" onclick="event.stopPropagation()">
-    <button class="modal-close" onclick="portal.closePreview()" aria-label="Close">&times;</button>
+    <button class="modal-close" onclick="portalBrowse.closePreview()" aria-label="Close">&times;</button>
     <div id="preview-content"></div>
     <div class="modal-actions">
-      <button class="ghost" onclick="portal.closePreview()">Close</button>
+      <button class="ghost" onclick="portalBrowse.closePreview()">Close</button>
       <button class="primary" id="preview-download">Download</button>
     </div>
   </div>

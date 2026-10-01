@@ -1,18 +1,7 @@
-/* Reflect Co Media Portal — service worker.
-   Network-first for HTML/JS/CSS so deploys land immediately,
-   cache-first for images the shell needs, never cache Supabase. */
-
-const VERSION = 'reflect-portal-v3';
+const VERSION = 'reflect-portal-v2-1';
 const SHELL = [
-  './',
-  './index.html',
-  './styles.css',
-  './app.js',
-  './config.js',
-  './manifest.json',
-  './icon.png',
-  './icon-192.png',
-  './icon-512.png'
+  './', './index.html', './styles.css', './app.js', './config.js',
+  './manifest.json', './icon.png', './icon-192.png', './icon-512.png'
 ];
 
 self.addEventListener('install', e => {
@@ -52,7 +41,6 @@ self.addEventListener('fetch', e => {
     );
     return;
   }
-
   e.respondWith(
     caches.match(e.request).then(hit => hit || fetch(e.request).then(r => {
       const copy = r.clone();

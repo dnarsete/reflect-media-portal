@@ -1,10 +1,17 @@
 /* ============================================================================
-   Reflect Co — Media Portal
-   Customer-facing static site. Auth via Supabase magic-link. Access is gated
-   by a portal_authorized_emails allow-list that admins manage from the CRM.
-   Portal users have NO admin role and NO rep_id, so every CRM table's RLS
-   policy blocks them by default. Only their own account's downloads and
-   authorized-emails rows are readable.
+   Reflect Co — Media Portal (v2)
+
+   Design principles:
+     - Portal access is 100% opt-in. No auto-sync. Every allow-list row
+       is an explicit admin decision made in the CRM.
+     - Portal users have NO admin role and NO rep_id, so every CRM
+       table's existing RLS blocks them by default — no new grants
+       needed. Only their own account's downloads are visible to them.
+     - Staff emails (admin/rep) are hard-blocked at the DB level from
+       ever landing in the allow-list, from any code path.
+     - Every asset button uses data-attribute event delegation, not
+       inline onclick — filename special chars can never break or
+       inject.
    ============================================================================ */
 
 const CFG = window.REFLECT_PORTAL_CONFIG;
@@ -12,13 +19,19 @@ const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }
 });
 
-const ui = {
-  show(viewId) {
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+
+const view = {
+  show(id) {
     document.querySelectorAll('.view').forEach(v => v.classList.add('hide'));
-    const el = document.getElementById(viewId);
+    const el = document.getElementById(id);
     if (el) el.classList.remove('hide');
-  },
-  toast(msg, kind = 'ok') {
+  }
+};
+
+const toast = {
+  signin(msg, kind = 'ok') {
     const el = document.getElementById('signin-msg');
     if (!el) return;
     el.textContent = msg;
@@ -27,10 +40,8 @@ const ui = {
   }
 };
 
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
-  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-
-const auth = {
+/* ================= AUTH ================= */
+const portalAuth = {
   _accountCtx: null,
 
   async sendMagicLink() {
@@ -38,7 +49,7 @@ const auth = {
     const submitBtn = document.getElementById('signin-submit');
     const email = emailEl.value.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      ui.toast('Please enter a valid email address.', 'err');
+      toast.signin('Please enter a valid email address.', 'err');
       return;
     }
     submitBtn.disabled = true;
@@ -52,9 +63,9 @@ const auth = {
         }
       });
       if (error) throw error;
-      ui.toast('Check your inbox — the sign-in link will arrive in a few seconds. It works for 60 minutes.', 'ok');
+      toast.signin('Check your inbox — the sign-in link will arrive in a few seconds. It works for 60 minutes.', 'ok');
     } catch (e) {
-      ui.toast(e.message || 'Something went wrong. Try again in a moment.', 'err');
+      toast.signin(e.message || 'Something went wrong. Try again in a moment.', 'err');
     } finally {
       submitBtn.disabled = false;
       submitBtn.textContent = 'Send sign-in link';
@@ -66,34 +77,29 @@ const auth = {
     location.href = '/';
   },
 
-  /* After sign-in, look up whether this email is on the authorized list
-     and which account it maps to. If not, show the denied screen. */
-  async resolveContext() {
-    const { data: userData } = await sb.auth.getUser();
-    const user = userData?.user;
-    if (!user) return null;
-
-    const r = await sb.rpc('portal_resolve_context');
+  /* Look up which account this signed-in email is authorized for.
+     Uses portal_current_account() RPC — runs SECURITY DEFINER against
+     the allow-list. Returns null if the email isn't on any account's list. */
+  async whichAccount() {
+    const r = await sb.rpc('portal_current_account');
     if (r.error) {
-      console.warn('[portal] resolve_context failed:', r.error);
+      console.warn('[portal] whichAccount failed:', r.error);
       return null;
     }
     return r.data && r.data.length ? r.data[0] : null;
   },
 
-  /* Enter the signed-in flow: resolve which account this user belongs
-     to and either show the browse view or the "not authorized" screen. */
   async _enterSignedIn() {
-    const ctx = await auth.resolveContext();
+    const ctx = await portalAuth.whichAccount();
     if (!ctx || !ctx.account_id) {
-      ui.show('view-denied');
+      view.show('view-denied');
       return;
     }
-    auth._accountCtx = ctx;
+    portalAuth._accountCtx = ctx;
     document.getElementById('header-account').classList.remove('hide');
     document.getElementById('header-account-name').textContent = ctx.business_name || '';
-    ui.show('view-browse');
-    await portal.load();
+    view.show('view-browse');
+    await portalBrowse.load();
   },
 
   async boot() {
@@ -101,61 +107,52 @@ const auth = {
     const hasAuthPayload = params.has('access_token') || params.has('error');
 
     if (hasAuthPayload) {
-      /* Magic-link redirect. Show the "signing you in" splash while
-         supabase-js parses the hash and finalizes the session. Waiting
-         for the SIGNED_IN event is bulletproof — no hardcoded timeout
-         to guess right on every device. */
-      ui.show('view-callback');
+      /* Magic-link redirect. Wait for supabase-js to finalize the
+         session via onAuthStateChange rather than a hardcoded timeout. */
+      view.show('view-callback');
       await new Promise((resolve) => {
-        const { data: sub } = sb.auth.onAuthStateChange((event, session) => {
+        const { data: sub } = sb.auth.onAuthStateChange((event) => {
           if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
             try { sub.subscription.unsubscribe(); } catch (_) {}
-            resolve(session);
+            resolve();
           }
         });
-        /* Safety net: if the hash was invalid and no event fires within
-           4 s, fall through so we don't hang on "Signing you in…". */
-        setTimeout(() => { try { sub.subscription.unsubscribe(); } catch (_) {} resolve(null); }, 4000);
+        setTimeout(() => { try { sub.subscription.unsubscribe(); } catch (_) {} resolve(); }, 4000);
       });
       history.replaceState(null, '', location.pathname);
     }
 
     const { data } = await sb.auth.getSession();
     if (!data?.session) {
-      ui.show('view-signin');
+      view.show('view-signin');
       return;
     }
-
-    await auth._enterSignedIn();
+    await portalAuth._enterSignedIn();
   }
 };
 
-const portal = {
+/* ================= BROWSE ================= */
+const portalBrowse = {
   _files: [],
+  _actionsBound: false,
+  _escHandler: null,
 
-  _bindAssetActions() {
-    /* Attach the delegated click handler exactly once. Reads the
-       action + path + name + category from the target button's
-       data-attributes and dispatches. Immune to filename special
-       characters. */
-    if (portal._actionsBound) return;
-    portal._actionsBound = true;
+  _bindActions() {
+    if (portalBrowse._actionsBound) return;
+    portalBrowse._actionsBound = true;
     document.getElementById('browse-list').addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-action]');
       if (!btn) return;
-      const action = btn.dataset.action;
-      const path = btn.dataset.path;
-      const name = btn.dataset.name;
-      const category = btn.dataset.category;
-      if (action === 'preview') portal.preview(path, name, category);
-      else if (action === 'download') portal.download(path, name);
+      const { action, path, name, category } = btn.dataset;
+      if (action === 'preview') portalBrowse.openPreview(path, name, category);
+      else if (action === 'download') portalBrowse.download(path, name);
     });
   },
 
   async load() {
     const wrap = document.getElementById('browse-list');
     wrap.innerHTML = '<div class="muted">Loading…</div>';
-    portal._bindAssetActions();
+    portalBrowse._bindActions();
     try {
       const results = await Promise.all(
         CFG.PORTAL_CATEGORIES.map(async (cat) => {
@@ -168,9 +165,8 @@ const portal = {
             .map(f => ({ ...f, category: cat, path: `${cat}/${f.name}` }));
         })
       );
-      portal._files = results.flat();
+      portalBrowse._files = results.flat();
 
-      /* Populate category filter */
       const catSel = document.getElementById('browse-category');
       if (catSel.options.length <= 1) {
         CFG.PORTAL_CATEGORIES.forEach(c => {
@@ -181,9 +177,9 @@ const portal = {
         });
       }
 
-      portal.render();
+      portalBrowse.render();
     } catch (e) {
-      wrap.innerHTML = `<div class="muted">Could not load media library: ${esc(e.message || e)}</div>`;
+      wrap.innerHTML = `<div class="muted">Could not load media: ${esc(e.message || e)}</div>`;
     }
   },
 
@@ -191,14 +187,14 @@ const portal = {
     const wrap = document.getElementById('browse-list');
     const q = (document.getElementById('browse-search').value || '').trim().toLowerCase();
     const catF = document.getElementById('browse-category').value || '';
-    const filtered = portal._files.filter(f => {
+    const filtered = portalBrowse._files.filter(f => {
       if (catF && f.category !== catF) return false;
       if (!q) return true;
       return (f.name + ' ' + f.category).toLowerCase().includes(q);
     });
 
     if (!filtered.length) {
-      wrap.innerHTML = `<div class="muted">${portal._files.length === 0 ? 'No media available yet — check back soon.' : 'No matches for that search.'}</div>`;
+      wrap.innerHTML = `<div class="muted">${portalBrowse._files.length === 0 ? 'No media yet — check back soon.' : 'No matches.'}</div>`;
       return;
     }
 
@@ -207,7 +203,7 @@ const portal = {
 
     wrap.innerHTML = Object.keys(groups).sort().map(cat => `
       <h2 class="category-h">${esc(cat)}</h2>
-      ${groups[cat].map(f => portal._cardHTML(f)).join('')}
+      ${groups[cat].map(f => portalBrowse._cardHTML(f)).join('')}
     `).join('');
   },
 
@@ -231,10 +227,6 @@ const portal = {
       thumb = `<div class="placeholder">📎</div>`;
     }
 
-    /* Buttons store their asset ref in data-* attributes. Handler is
-       attached ONCE via delegation in portal.load() so filename special
-       characters (apostrophes, quotes, backslashes) can't break the
-       button or inject anything into an inline onclick. */
     return `<div class="asset-card">
       <div class="asset-thumb">${thumb}</div>
       <div class="asset-meta">
@@ -248,10 +240,7 @@ const portal = {
     </div>`;
   },
 
-  /* Open the preview modal for an asset. Images render as <img>, videos
-     as a playable <video controls>, other file types fall back to an
-     icon + note prompting the download button. */
-  preview(path, name, category) {
+  openPreview(path, name, category) {
     const ext = (name.split('.').pop() || '').toLowerCase();
     const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
     const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
@@ -259,61 +248,43 @@ const portal = {
     const content = document.getElementById('preview-content');
 
     let media;
-    if (isImage) {
-      media = `<img src="${esc(url)}" alt="${esc(name)}"/>`;
-    } else if (isVideo) {
-      media = `<video src="${esc(url)}" controls autoplay playsinline></video>`;
-    } else {
-      media = `<div class="preview-fallback">
-        <div class="placeholder">📎</div>
-        <p class="muted">Preview isn't available for this file type. Use Download to save it.</p>
-      </div>`;
-    }
+    if (isImage) media = `<img src="${esc(url)}" alt="${esc(name)}"/>`;
+    else if (isVideo) media = `<video src="${esc(url)}" controls autoplay playsinline></video>`;
+    else media = `<div class="preview-fallback"><div class="placeholder">📎</div><p class="muted">Preview isn't available for this file type. Use Download to save it.</p></div>`;
+
     content.innerHTML = `${media}
       <div class="preview-meta">
         <div class="preview-name">${esc(name)}</div>
         ${esc(category)}
       </div>`;
 
-    const dlBtn = document.getElementById('preview-download');
-    dlBtn.onclick = () => portal.download(path, name);
-
-    const modal = document.getElementById('preview-modal');
-    modal.classList.remove('hide');
+    document.getElementById('preview-download').onclick = () => portalBrowse.download(path, name);
+    document.getElementById('preview-modal').classList.remove('hide');
     document.body.style.overflow = 'hidden';
 
-    /* Close on Escape */
-    portal._escHandler = (e) => { if (e.key === 'Escape') portal.closePreview(); };
-    document.addEventListener('keydown', portal._escHandler);
+    portalBrowse._escHandler = (e) => { if (e.key === 'Escape') portalBrowse.closePreview(); };
+    document.addEventListener('keydown', portalBrowse._escHandler);
   },
 
   closePreview(e) {
-    /* Only close on backdrop clicks or the close button — not on clicks
-       inside the modal body (those are stopped in the onclick attribute). */
     if (e && e.target && e.target.id !== 'preview-modal' && e.target.tagName !== 'BUTTON') return;
-    const modal = document.getElementById('preview-modal');
-    modal.classList.add('hide');
-    /* Stop any playing video so audio doesn't linger */
+    document.getElementById('preview-modal').classList.add('hide');
     const vid = document.querySelector('#preview-content video');
     if (vid) { try { vid.pause(); } catch (_) {} }
     document.getElementById('preview-content').innerHTML = '';
     document.body.style.overflow = '';
-    if (portal._escHandler) {
-      document.removeEventListener('keydown', portal._escHandler);
-      portal._escHandler = null;
+    if (portalBrowse._escHandler) {
+      document.removeEventListener('keydown', portalBrowse._escHandler);
+      portalBrowse._escHandler = null;
     }
   },
 
   async download(path, filename) {
     try {
-      /* Log the download BEFORE the fetch — a failed log shouldn't block the
-         download, but a completed download without a log is worse than a
-         completed download with a duplicate log. */
-      try {
-        await sb.rpc('portal_log_download', { p_asset_path: path });
-      } catch (e) {
-        console.warn('[portal] download log failed:', e);
-      }
+      /* Log first — a failed log is better than an unlogged download. */
+      try { await sb.rpc('portal_record_download', { p_asset_path: path }); }
+      catch (e) { console.warn('[portal] download log failed:', e); }
+
       const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
       const a = document.createElement('a');
       a.href = url;
@@ -328,5 +299,5 @@ const portal = {
   }
 };
 
-/* ---------- Boot ---------- */
-auth.boot();
+/* Boot */
+portalAuth.boot();
