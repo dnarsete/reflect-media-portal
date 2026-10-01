@@ -89,6 +89,18 @@ const portalAuth = {
     return r.data && r.data.length ? r.data[0] : null;
   },
 
+  /* Check whether the signed-in user is an admin (role='admin' in
+     profiles). Used to show the upload button in the header. */
+  async isAdmin() {
+    try {
+      const { data: userData } = await sb.auth.getUser();
+      const uid = userData?.user?.id;
+      if (!uid) return false;
+      const r = await sb.from('profiles').select('role').eq('id', uid).maybeSingle();
+      return r.data?.role === 'admin';
+    } catch (_) { return false; }
+  },
+
   async _enterSignedIn() {
     const ctx = await portalAuth.whichAccount();
     if (!ctx || !ctx.account_id) {
@@ -98,6 +110,13 @@ const portalAuth = {
     portalAuth._accountCtx = ctx;
     document.getElementById('header-account').classList.remove('hide');
     document.getElementById('header-account-name').textContent = ctx.business_name || '';
+
+    /* Admin gets the upload button. Checked silently; non-admins see
+       no indication the button could exist. */
+    if (await portalAuth.isAdmin()) {
+      document.getElementById('upload-btn').classList.remove('hide');
+    }
+
     view.show('view-browse');
     await portalBrowse.load();
   },
@@ -296,6 +315,75 @@ const portalBrowse = {
     } catch (e) {
       alert('Download failed: ' + (e.message || e));
     }
+  }
+};
+
+/* ================= UPLOAD (admin only) ================= */
+const portalUpload = {
+  open() {
+    const sel = document.getElementById('upload-category');
+    if (sel.options.length <= 1) {
+      CFG.PORTAL_CATEGORIES.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c;
+        opt.textContent = c;
+        sel.appendChild(opt);
+      });
+    }
+    document.getElementById('upload-files').value = '';
+    document.getElementById('upload-status').innerHTML = '';
+    document.getElementById('upload-submit').disabled = false;
+    document.getElementById('upload-modal').classList.remove('hide');
+    document.body.style.overflow = 'hidden';
+  },
+
+  close(e) {
+    if (e && e.target && e.target.id !== 'upload-modal' && e.target.tagName !== 'BUTTON') return;
+    document.getElementById('upload-modal').classList.add('hide');
+    document.body.style.overflow = '';
+  },
+
+  async submit() {
+    const category = document.getElementById('upload-category').value;
+    const filesInput = document.getElementById('upload-files');
+    const files = Array.from(filesInput.files || []);
+    const status = document.getElementById('upload-status');
+    const submit = document.getElementById('upload-submit');
+    if (!category) { status.innerHTML = '<div class="signin-msg err">Pick a category first.</div>'; return; }
+    if (!files.length) { status.innerHTML = '<div class="signin-msg err">Pick at least one file.</div>'; return; }
+
+    submit.disabled = true;
+    status.innerHTML = `<div class="muted">Uploading 0 of ${files.length}…</div>`;
+
+    let done = 0, failed = 0;
+    const failedNames = [];
+    for (const f of files) {
+      const safeName = f.name.replace(/[/\\]/g, '_');
+      const path = `${category}/${safeName}`;
+      try {
+        const r = await sb.storage.from(CFG.MATERIALS_BUCKET).upload(path, f, {
+          cacheControl: '3600',
+          upsert: true,
+          contentType: f.type || undefined
+        });
+        if (r.error) throw r.error;
+        done++;
+      } catch (e) {
+        failed++;
+        failedNames.push(`${f.name} — ${e.message || e}`);
+      }
+      status.innerHTML = `<div class="muted">Uploaded ${done} of ${files.length}${failed ? ` · ${failed} failed` : ''}…</div>`;
+    }
+
+    if (failed === 0) {
+      status.innerHTML = `<div class="signin-msg ok">${done} file${done===1?'':'s'} uploaded. They're live on the portal now.</div>`;
+      await portalBrowse.load();
+      setTimeout(() => portalUpload.close(), 1500);
+    } else {
+      status.innerHTML = `<div class="signin-msg err">Uploaded ${done} of ${files.length}. ${failed} failed:<br/>${failedNames.map(esc).join('<br/>')}</div>`;
+      await portalBrowse.load();
+    }
+    submit.disabled = false;
   }
 };
 

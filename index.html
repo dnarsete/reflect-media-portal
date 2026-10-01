@@ -73,6 +73,7 @@
   </div>
   <div id="header-account" class="header-account hide">
     <span id="header-account-name" class="muted"></span>
+    <button id="upload-btn" class="link-btn hide" onclick="portalUpload.open()">⬆ Upload</button>
     <button class="link-btn" onclick="portalAuth.signOut()">Sign out</button>
   </div>
 </header>
@@ -131,6 +132,26 @@
     </div>
   </div>
 </section>
+
+<div id="upload-modal" class="modal hide" onclick="portalUpload.close(event)">
+  <div class="modal-body" onclick="event.stopPropagation()" style="max-width:520px">
+    <button class="modal-close" onclick="portalUpload.close()" aria-label="Close">&times;</button>
+    <div style="padding:28px 28px 16px">
+      <h1 style="margin:0 0 8px;font-size:20px">Upload to media portal</h1>
+      <p class="muted" style="margin:0 0 16px;font-size:13px">Files go straight into the shared Materials storage. Everyone who's authorized on the portal sees them within a few seconds.</p>
+      <form onsubmit="event.preventDefault(); portalUpload.submit();">
+        <label for="upload-category">Category</label>
+        <select id="upload-category" required>
+          <option value="">— pick one —</option>
+        </select>
+        <label for="upload-files" style="margin-top:12px">Files</label>
+        <input id="upload-files" type="file" multiple required/>
+        <div id="upload-status" style="margin-top:12px"></div>
+        <button id="upload-submit" type="submit" class="primary" style="width:100%">Upload</button>
+      </form>
+    </div>
+  </div>
+</div>
 
 <div id="preview-modal" class="modal hide" onclick="portalBrowse.closePreview(event)">
   <div class="modal-body" onclick="event.stopPropagation()">
