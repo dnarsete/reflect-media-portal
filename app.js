@@ -111,9 +111,11 @@ const portalAuth = {
     document.getElementById('header-account').classList.remove('hide');
     document.getElementById('header-account-name').textContent = ctx.business_name || '';
 
-    /* Admin gets the upload button. Checked silently; non-admins see
-       no indication the button could exist. */
-    if (await portalAuth.isAdmin()) {
+    /* Admin gets the upload button + delete button on each file.
+       Checked silently; non-admins see no indication these controls
+       could exist. */
+    portalBrowse._isAdmin = await portalAuth.isAdmin();
+    if (portalBrowse._isAdmin) {
       document.getElementById('upload-btn').classList.remove('hide');
     }
 
@@ -165,6 +167,7 @@ const portalBrowse = {
       const { action, path, name, category } = btn.dataset;
       if (action === 'preview') portalBrowse.openPreview(path, name, category);
       else if (action === 'download') portalBrowse.download(path, name);
+      else if (action === 'delete') portalBrowse.deleteFile(path, name);
     });
   },
 
@@ -246,6 +249,10 @@ const portalBrowse = {
       thumb = `<div class="placeholder">📎</div>`;
     }
 
+    const adminDeleteBtn = portalBrowse._isAdmin
+      ? `<button class="danger" data-action="delete" data-path="${esc(f.path)}" data-name="${esc(f.name)}" title="Delete (admin only)" aria-label="Delete">🗑</button>`
+      : '';
+
     return `<div class="asset-card">
       <div class="asset-thumb">${thumb}</div>
       <div class="asset-meta">
@@ -255,6 +262,7 @@ const portalBrowse = {
       <div class="asset-actions">
         <button class="ghost" data-action="preview" data-path="${esc(f.path)}" data-name="${esc(f.name)}" data-category="${esc(f.category)}">Preview</button>
         <button class="primary" data-action="download" data-path="${esc(f.path)}" data-name="${esc(f.name)}">Download</button>
+        ${adminDeleteBtn}
       </div>
     </div>`;
   },
@@ -295,6 +303,18 @@ const portalBrowse = {
     if (portalBrowse._escHandler) {
       document.removeEventListener('keydown', portalBrowse._escHandler);
       portalBrowse._escHandler = null;
+    }
+  },
+
+  async deleteFile(path, name) {
+    if (!portalBrowse._isAdmin) return;
+    if (!confirm(`Permanently delete "${name}" from the media portal?\n\nThis removes the file from Supabase storage. There is no undo.`)) return;
+    try {
+      const r = await sb.storage.from(CFG.MATERIALS_BUCKET).remove([path]);
+      if (r.error) throw r.error;
+      await portalBrowse.load();
+    } catch (e) {
+      alert('Delete failed: ' + (e.message || e));
     }
   },
 

@@ -81,6 +81,8 @@ button.primary:hover { background: var(--brand-hover); border-color: var(--brand
 button.primary:disabled { background: var(--muted); border-color: var(--muted); cursor: not-allowed; }
 button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 button.ghost:hover { border-color: var(--muted); }
+button.danger { background: transparent; color: var(--danger); border: 1px solid var(--line); }
+button.danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
 
 .signin-msg { margin-top: 16px; padding: 12px 14px; border-radius: 8px; font-size: 14px; }
 .signin-msg.ok { background: #e6f3ec; color: var(--ok); border: 1px solid #b7dfc5; }
@@ -122,6 +124,7 @@ button.ghost:hover { border-color: var(--muted); }
 .asset-sub { font-size: 12px; color: var(--muted); display: flex; gap: 8px; }
 .asset-actions { display: flex; gap: 6px; padding: 0 14px 14px; }
 .asset-actions button { flex: 1; padding: 8px 12px; font-size: 13px; margin-top: 0; }
+.asset-actions button.danger { flex: 0 0 auto; min-width: 40px; max-width: 44px; padding: 8px 10px; }
 
 .category-h {
   grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; font-weight: 600;
