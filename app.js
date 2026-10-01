@@ -103,7 +103,11 @@ const portalAuth = {
 
   async _enterSignedIn() {
     const ctx = await portalAuth.whichAccount();
-    if (!ctx || !ctx.account_id) {
+    /* Customer: ctx.account_id is a real UUID. Staff (admin/rep):
+       ctx.account_id is NULL but business_name is 'Staff · {name}'.
+       Both are valid signed-in states; only an empty ctx (email on
+       no list and not a staff user) hits the denied screen. */
+    if (!ctx) {
       view.show('view-denied');
       return;
     }
