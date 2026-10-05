@@ -172,6 +172,7 @@ const portalBrowse = {
       if (action === 'preview') portalBrowse.openPreview(path, name, category);
       else if (action === 'download') portalBrowse.download(path, name);
       else if (action === 'delete') portalBrowse.deleteFile(path, name);
+      else if (action === 'viewOffice') portalBrowse.viewOffice(path, name);
     });
   },
 
@@ -237,6 +238,7 @@ const portalBrowse = {
     const ext = (f.name.split('.').pop() || '').toLowerCase();
     const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
     const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
+    const isOffice = ['pptx', 'ppt', 'docx', 'doc', 'xlsx', 'xls'].includes(ext);
     const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(f.path).data.publicUrl;
     const kb = f.metadata?.size
       ? (f.metadata.size < 1024 * 1024
@@ -249,6 +251,11 @@ const portalBrowse = {
       thumb = `<img src="${esc(url)}" alt="${esc(f.name)}" loading="lazy"/>`;
     } else if (isVideo) {
       thumb = `<video src="${esc(url)}#t=0.5" muted preload="metadata"></video><div class="asset-play">▶</div>`;
+    } else if (isOffice) {
+      /* Office files preview inline via Microsoft's viewer so the thumb
+         shows the first page, same as the CRM materials grid. */
+      const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+      thumb = `<iframe src="${esc(officeUrl)}" style="width:100%;height:100%;border:0;pointer-events:none;background:#fff" loading="lazy" title="${esc(f.name)}"></iframe>`;
     } else {
       thumb = `<div class="placeholder">📎</div>`;
     }
@@ -257,15 +264,25 @@ const portalBrowse = {
       ? `<button class="danger" data-action="delete" data-path="${esc(f.path)}" data-name="${esc(f.name)}" title="Delete (admin only)" aria-label="Delete">🗑</button>`
       : '';
 
+    /* Office files: preview-only (opens in a new tab via Office Online
+       Viewer). No Download button — Dan wants training/proprietary
+       Office content viewable but not distributable. */
+    const previewBtn = isOffice
+      ? `<button class="ghost" data-action="viewOffice" data-path="${esc(f.path)}" data-name="${esc(f.name)}">View in new window</button>`
+      : `<button class="ghost" data-action="preview" data-path="${esc(f.path)}" data-name="${esc(f.name)}" data-category="${esc(f.category)}">Preview</button>`;
+    const downloadBtn = isOffice
+      ? ''
+      : `<button class="primary" data-action="download" data-path="${esc(f.path)}" data-name="${esc(f.name)}">Download</button>`;
+
     return `<div class="asset-card">
       <div class="asset-thumb">${thumb}</div>
       <div class="asset-meta">
         <span class="asset-name">${esc(f.name)}</span>
-        <span class="asset-sub">${esc(f.category)}${kb ? ' · ' + esc(kb) : ''}</span>
+        <span class="asset-sub">${esc(f.category)}${kb ? ' · ' + esc(kb) : ''}${isOffice ? ' · view only' : ''}</span>
       </div>
       <div class="asset-actions">
-        <button class="ghost" data-action="preview" data-path="${esc(f.path)}" data-name="${esc(f.name)}" data-category="${esc(f.category)}">Preview</button>
-        <button class="primary" data-action="download" data-path="${esc(f.path)}" data-name="${esc(f.name)}">Download</button>
+        ${previewBtn}
+        ${downloadBtn}
         ${adminDeleteBtn}
       </div>
     </div>`;
@@ -308,6 +325,15 @@ const portalBrowse = {
       document.removeEventListener('keydown', portalBrowse._escHandler);
       portalBrowse._escHandler = null;
     }
+  },
+
+  /* Open an Office file in a new tab via Microsoft's viewer. No
+     download, no save-to-disk — the file is viewable but not
+     distributable from the portal. */
+  viewOffice(path) {
+    const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
+    const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+    window.open(officeUrl, '_blank', 'noopener,noreferrer');
   },
 
   async deleteFile(path, name) {

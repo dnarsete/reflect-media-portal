@@ -1,4 +1,4 @@
-const VERSION = 'reflect-portal-v2-5';
+const VERSION = 'reflect-portal-v2-6';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './config.js',
   './manifest.json', './icon.png', './icon-192.png', './icon-512.png'
