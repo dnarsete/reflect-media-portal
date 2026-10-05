@@ -5,6 +5,6 @@ window.REFLECT_PORTAL_CONFIG = {
   SUPABASE_URL: 'https://clzpkjssxvmgvgloxehk.supabase.co',
   SUPABASE_KEY: 'sb_publishable_AVb4KY5cTUdtMbltuiRPUg_YOdfNVvi',
   MATERIALS_BUCKET: 'materials',
-  PORTAL_CATEGORIES: ['Social Media', 'Instructions', 'Videos'],
+  PORTAL_CATEGORIES: ['Training', 'Instructions', 'Social Media', 'Videos'],
   SITE_URL: 'https://media.thereflectco.com'
 };

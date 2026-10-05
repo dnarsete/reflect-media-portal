@@ -125,6 +125,20 @@ button.danger:hover { background: var(--danger); color: #fff; border-color: var(
 .asset-actions { display: flex; gap: 6px; padding: 0 14px 14px; }
 .asset-actions button { flex: 1; padding: 8px 12px; font-size: 13px; margin-top: 0; }
 .asset-actions button.danger { flex: 0 0 auto; min-width: 40px; max-width: 44px; padding: 8px 10px; }
+.asset-actions .move-select {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  max-width: 110px;
+  appearance: none;
+}
+.asset-actions .move-select:hover { border-color: var(--muted); }
 
 .category-h {
   grid-column: 1 / -1; margin: 8px 0 0; font-size: 13px; font-weight: 600;

@@ -228,7 +228,12 @@ const portalBrowse = {
     const groups = {};
     filtered.forEach(f => { (groups[f.category] = groups[f.category] || []).push(f); });
 
-    wrap.innerHTML = Object.keys(groups).sort().map(cat => `
+    /* Preserve the config order (Training → Instructions → Social
+       Media → Videos) instead of sorting alphabetically. Any folder
+       that somehow isn't in PORTAL_CATEGORIES falls to the end. */
+    const orderedCats = CFG.PORTAL_CATEGORIES.filter(c => groups[c])
+      .concat(Object.keys(groups).filter(c => !CFG.PORTAL_CATEGORIES.includes(c)));
+    wrap.innerHTML = orderedCats.map(cat => `
       <h2 class="category-h">${esc(cat)}</h2>
       ${groups[cat].map(f => portalBrowse._cardHTML(f)).join('')}
     `).join('');
@@ -264,6 +269,13 @@ const portalBrowse = {
       ? `<button class="danger" data-action="delete" data-path="${esc(f.path)}" data-name="${esc(f.name)}" title="Delete (admin only)" aria-label="Delete">🗑</button>`
       : '';
 
+    const adminMoveSelect = portalBrowse._isAdmin
+      ? `<select class="move-select" data-path="${esc(f.path)}" data-name="${esc(f.name)}" onchange="portalBrowse.moveFile(this.dataset.path, this.dataset.name, this.value); this.value='__move'" title="Move to another category (admin only)">
+          <option value="__move">↔ Move to…</option>
+          ${CFG.PORTAL_CATEGORIES.filter(c => c !== f.category).map(c => `<option value="${esc(c)}">→ ${esc(c)}</option>`).join('')}
+        </select>`
+      : '';
+
     /* Office files: preview-only (opens in a new tab via Office Online
        Viewer). No Download button — Dan wants training/proprietary
        Office content viewable but not distributable. */
@@ -283,6 +295,7 @@ const portalBrowse = {
       <div class="asset-actions">
         ${previewBtn}
         ${downloadBtn}
+        ${adminMoveSelect}
         ${adminDeleteBtn}
       </div>
     </div>`;
@@ -324,6 +337,22 @@ const portalBrowse = {
     if (portalBrowse._escHandler) {
       document.removeEventListener('keydown', portalBrowse._escHandler);
       portalBrowse._escHandler = null;
+    }
+  },
+
+  /* Move a file to a different category folder. Admin only.
+     Supabase storage API has a direct move() method. */
+  async moveFile(path, name, newCategory) {
+    if (!portalBrowse._isAdmin) return;
+    if (!newCategory || newCategory === '__move') return;
+    const newPath = `${newCategory}/${name}`;
+    if (newPath === path) return;
+    try {
+      const r = await sb.storage.from(CFG.MATERIALS_BUCKET).move(path, newPath);
+      if (r.error) throw r.error;
+      await portalBrowse.load();
+    } catch (e) {
+      alert('Move failed: ' + (e.message || e));
     }
   },
 
