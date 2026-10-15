@@ -1,13 +1,18 @@
-const VERSION = 'reflect-portal-v2-7';
+const VERSION = 'reflect-portal-v2-8';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './config.js',
   './manifest.json', './icon.png', './icon-192.png', './icon-512.png'
 ];
 
 self.addEventListener('install', e => {
+  /* No silent catch — if a SHELL asset 404s during install (bad deploy,
+     renamed file), FAIL the install so the browser keeps the old
+     working SW active instead of activating a half-populated cache.
+     Errors show up as "ServiceWorker install failed" in the browser
+     devtools, which is loud enough to notice. */
   e.waitUntil(
     caches.open(VERSION)
-      .then(c => c.addAll(SHELL).catch(() => {}))
+      .then(c => c.addAll(SHELL))
       .then(() => self.skipWaiting())
   );
 });

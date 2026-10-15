@@ -132,18 +132,31 @@ const portalAuth = {
     const hasAuthPayload = params.has('access_token') || params.has('error');
 
     if (hasAuthPayload) {
-      /* Magic-link redirect. Wait for supabase-js to finalize the
-         session via onAuthStateChange rather than a hardcoded timeout. */
       view.show('view-callback');
-      await new Promise((resolve) => {
-        const { data: sub } = sb.auth.onAuthStateChange((event) => {
-          if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-            try { sub.subscription.unsubscribe(); } catch (_) {}
-            resolve();
-          }
+      /* supabase-js often finalizes the session synchronously from the
+         URL fragment before our listener attaches, in which case
+         onAuthStateChange NEVER emits SIGNED_IN and we used to sit on
+         the loading screen for a full 4 s. Poll getSession briefly
+         first — if the session is already there, skip the wait. */
+      let gotSession = false;
+      for (let i = 0; i < 20 && !gotSession; i++) {
+        const { data } = await sb.auth.getSession();
+        if (data?.session) { gotSession = true; break; }
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (!gotSession) {
+        /* Fall back to the listener for the slow-path, with the same
+           4 s cap so we never hang forever. */
+        await new Promise((resolve) => {
+          const { data: sub } = sb.auth.onAuthStateChange((event) => {
+            if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+              try { sub.subscription.unsubscribe(); } catch (_) {}
+              resolve();
+            }
+          });
+          setTimeout(() => { try { sub.subscription.unsubscribe(); } catch (_) {} resolve(); }, 4000);
         });
-        setTimeout(() => { try { sub.subscription.unsubscribe(); } catch (_) {} resolve(); }, 4000);
-      });
+      }
       history.replaceState(null, '', location.pathname);
     }
 
@@ -174,6 +187,32 @@ const portalBrowse = {
       else if (action === 'delete') portalBrowse.deleteFile(path, name);
       else if (action === 'viewOffice') portalBrowse.viewOffice(path, name);
     });
+    /* Move-to dropdown routed through delegation too so inline onchange
+       isn't the only path — survives a future CSP tightening that drops
+       'unsafe-inline' and makes attribute handlers inert. */
+    document.getElementById('browse-list').addEventListener('change', (e) => {
+      const sel = e.target.closest('select.move-select');
+      if (!sel) return;
+      const val = sel.value;
+      if (val && val !== '__move') {
+        const { path, name } = sel.dataset;
+        /* Reset the dropdown FIRST so a re-render that happens inside
+           moveFile can't race the reset into firing change again. */
+        sel.value = '__move';
+        portalBrowse.moveFile(path, name, val);
+      }
+    });
+    /* Search input debounce — rebuilding the full grid (with Office
+       iframes) on every keystroke used to fire tens-to-hundreds of
+       Microsoft viewer loads per short query. 150 ms feels responsive
+       and collapses the storm. */
+    const search = document.getElementById('browse-search');
+    if (search) {
+      search.oninput = () => {
+        clearTimeout(portalBrowse._searchT);
+        portalBrowse._searchT = setTimeout(() => portalBrowse.render(), 150);
+      };
+    }
   },
 
   async load() {
@@ -270,7 +309,7 @@ const portalBrowse = {
       : '';
 
     const adminMoveSelect = portalBrowse._isAdmin
-      ? `<select class="move-select" data-path="${esc(f.path)}" data-name="${esc(f.name)}" onchange="portalBrowse.moveFile(this.dataset.path, this.dataset.name, this.value); this.value='__move'" title="Move to another category (admin only)">
+      ? `<select class="move-select" data-path="${esc(f.path)}" data-name="${esc(f.name)}" title="Move to another category (admin only)">
           <option value="__move">↔ Move to…</option>
           ${CFG.PORTAL_CATEGORIES.filter(c => c !== f.category).map(c => `<option value="${esc(c)}">→ ${esc(c)}</option>`).join('')}
         </select>`
@@ -305,12 +344,14 @@ const portalBrowse = {
     const ext = (name.split('.').pop() || '').toLowerCase();
     const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
     const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
+    const isPdf = ext === 'pdf';
     const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
     const content = document.getElementById('preview-content');
 
     let media;
     if (isImage) media = `<img src="${esc(url)}" alt="${esc(name)}"/>`;
     else if (isVideo) media = `<video src="${esc(url)}" controls autoplay playsinline></video>`;
+    else if (isPdf) media = `<iframe src="${esc(url)}" style="width:100%;height:80vh;border:0;background:#fff" title="${esc(name)}"></iframe>`;
     else media = `<div class="preview-fallback"><div class="placeholder">📎</div><p class="muted">Preview isn't available for this file type. Use Download to save it.</p></div>`;
 
     content.innerHTML = `${media}
@@ -323,6 +364,12 @@ const portalBrowse = {
     document.getElementById('preview-modal').classList.remove('hide');
     document.body.style.overflow = 'hidden';
 
+    /* Detach any previous handler before attaching a new one so a
+       double-open (keyboard shortcut, future auto-advance) doesn't
+       leak orphaned Esc listeners that fire on every future key. */
+    if (portalBrowse._escHandler) {
+      document.removeEventListener('keydown', portalBrowse._escHandler);
+    }
     portalBrowse._escHandler = (e) => { if (e.key === 'Escape') portalBrowse.closePreview(); };
     document.addEventListener('keydown', portalBrowse._escHandler);
   },
@@ -341,9 +388,12 @@ const portalBrowse = {
   },
 
   /* Move a file to a different category folder. Admin only.
-     Supabase storage API has a direct move() method. */
+     Supabase storage API has a direct move() method.
+     Re-checks admin against the server (not just the local _isAdmin
+     flag) so a browser-console flip of _isAdmin doesn't bypass the
+     client gate before Supabase RLS gets to see the request. */
   async moveFile(path, name, newCategory) {
-    if (!portalBrowse._isAdmin) return;
+    if (!(await portalAuth.isAdmin())) return;
     if (!newCategory || newCategory === '__move') return;
     const newPath = `${newCategory}/${name}`;
     if (newPath === path) return;
@@ -352,7 +402,14 @@ const portalBrowse = {
       if (r.error) throw r.error;
       await portalBrowse.load();
     } catch (e) {
-      alert('Move failed: ' + (e.message || e));
+      const msg = String(e?.message || e || '');
+      /* Specific message for the "destination name taken" case so the
+         admin knows what to do instead of just "Move failed: ...". */
+      if (/already exists|duplicate/i.test(msg)) {
+        alert(`Can't move "${name}" to ${newCategory} — a file with the same name is already there.\n\nRename or delete the one in ${newCategory} first, then try again.`);
+      } else {
+        alert('Move failed: ' + msg);
+      }
     }
   },
 
@@ -366,7 +423,9 @@ const portalBrowse = {
   },
 
   async deleteFile(path, name) {
-    if (!portalBrowse._isAdmin) return;
+    /* Re-check admin against the server so a browser-console flip of
+       _isAdmin doesn't let a non-admin reach storage.remove. */
+    if (!(await portalAuth.isAdmin())) return;
     if (!confirm(`Permanently delete "${name}" from the media portal?\n\nThis removes the file from Supabase storage. There is no undo.`)) return;
     try {
       const r = await sb.storage.from(CFG.MATERIALS_BUCKET).remove([path]);
@@ -383,7 +442,12 @@ const portalBrowse = {
       try { await sb.rpc('portal_record_download', { p_asset_path: path }); }
       catch (e) { console.warn('[portal] download log failed:', e); }
 
-      const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
+      /* { download: filename } tells Supabase to send
+         Content-Disposition: attachment; filename=... so the browser
+         saves the file instead of opening it in the current tab. The
+         bare `a.download` attribute is ignored by Chrome/Firefox on
+         cross-origin resources without an attachment header. */
+      const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path, { download: filename }).data.publicUrl;
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
@@ -430,6 +494,32 @@ const portalUpload = {
     const submit = document.getElementById('upload-submit');
     if (!category) { status.innerHTML = '<div class="signin-msg err">Pick a category first.</div>'; return; }
     if (!files.length) { status.innerHTML = '<div class="signin-msg err">Pick at least one file.</div>'; return; }
+
+    /* Server-verified admin re-check so a browser-console
+       portalBrowse._isAdmin=true can't open the modal and start a
+       storage.upload that only the bucket's RLS would reject. */
+    if (!(await portalAuth.isAdmin())) {
+      status.innerHTML = '<div class="signin-msg err">Upload is admin-only.</div>';
+      return;
+    }
+
+    /* Client-side upload guards — Supabase hard-fails anything over its
+       bucket limit (typically 50 MB per file for free, 5 GB on paid)
+       with a vague error that leaves half-finished uploads on screen.
+       Reject obviously oversized or batch-heavy picks here with a
+       clear message. Numbers are conservative; adjust in config.js if
+       you need larger uploads. */
+    const MAX_FILES = 25;
+    const MAX_BYTES_PER_FILE = 500 * 1024 * 1024; // 500 MB
+    if (files.length > MAX_FILES) {
+      status.innerHTML = `<div class="signin-msg err">Too many files (${files.length}). Upload up to ${MAX_FILES} at a time.</div>`;
+      return;
+    }
+    const tooBig = files.filter(f => f.size > MAX_BYTES_PER_FILE);
+    if (tooBig.length) {
+      status.innerHTML = `<div class="signin-msg err">${tooBig.length} file${tooBig.length===1?' is':'s are'} larger than 500 MB and can't be uploaded here:<br/>${tooBig.map(f => esc(f.name)).join('<br/>')}</div>`;
+      return;
+    }
 
     submit.disabled = true;
     status.innerHTML = `<div class="muted">Uploading 0 of ${files.length}…</div>`;
