@@ -1,6 +1,7 @@
-const VERSION = 'reflect-portal-v2-9';
+const VERSION = 'reflect-portal-v2-10';
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './config.js',
+  './frame-buster.js', './sw-register.js',
   './manifest.json', './icon.png', './icon-192.png', './icon-512.png'
 ];
 

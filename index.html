@@ -7,15 +7,11 @@
 <meta name="description" content="Download social media assets and videos for your Reflect Co account." />
 <meta name="theme-color" content="#0d2945" />
 
-<!-- Clickjacking defense: refuse to render inside a frame. -->
-<script>
-  if (window.top !== window.self) {
-    document.documentElement.style.display = 'none';
-    try { window.top.location = window.self.location.href; } catch (_) {}
-  }
-</script>
+<!-- Clickjacking defense: refuse to render inside a frame. External
+     script so the CSP can drop script-src 'unsafe-inline'. -->
+<script src="frame-buster.js"></script>
 
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data: blob: https://*.supabase.co; media-src 'self' blob: https://*.supabase.co; frame-src https://view.officeapps.live.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data: blob: https://*.supabase.co; media-src 'self' blob: https://*.supabase.co; frame-src https://view.officeapps.live.com; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
 
 <link rel="preconnect" href="https://clzpkjssxvmgvgloxehk.supabase.co" crossorigin />
@@ -35,33 +31,7 @@
         crossorigin="anonymous"></script>
 <script src="config.js"></script>
 
-<script>
-  /* SW auto-update — same pattern the CRM uses. Every deploy lands
-     on the next page load, no manual DevTools resets. */
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', async () => {
-      try {
-        const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
-        reg.update().catch(() => {});
-        reg.addEventListener('updatefound', () => {
-          const sw = reg.installing;
-          if (!sw) return;
-          sw.addEventListener('statechange', () => {
-            if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-              try { sw.postMessage({ type: 'SKIP_WAITING' }); } catch (_) {}
-            }
-          });
-        });
-        let reloading = false;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (reloading) return;
-          reloading = true;
-          window.location.reload();
-        });
-      } catch (err) { console.warn('SW register failed', err); }
-    });
-  }
-</script>
+<script src="sw-register.js"></script>
 </head>
 <body>
 
@@ -73,8 +43,8 @@
   </div>
   <div id="header-account" class="header-account hide">
     <span id="header-account-name" class="muted"></span>
-    <button id="upload-btn" class="link-btn hide" onclick="portalUpload.open()">⬆ Upload</button>
-    <button class="link-btn" onclick="portalAuth.signOut()">Sign out</button>
+    <button id="upload-btn" class="link-btn hide">⬆ Upload</button>
+    <button id="signout-btn" class="link-btn">Sign out</button>
   </div>
 </header>
 
@@ -83,7 +53,7 @@
     <div class="card">
       <h1>Sign in to your media library</h1>
       <p class="muted">Enter the email your Reflect Co rep authorized. We'll email you a one-click sign-in link.</p>
-      <form onsubmit="event.preventDefault(); portalAuth.sendMagicLink();">
+      <form id="signin-form">
         <label for="signin-email">Email address</label>
         <input id="signin-email" type="email" autocomplete="email" required placeholder="you@yourbusiness.com"/>
         <button type="submit" class="primary" id="signin-submit">Send sign-in link</button>
@@ -110,8 +80,8 @@
     <div class="browse-head">
       <h1 id="browse-title">Media library</h1>
       <div class="browse-controls">
-        <input id="browse-search" placeholder="Search assets…" oninput="portalBrowse.render()"/>
-        <select id="browse-category" onchange="portalBrowse.render()">
+        <input id="browse-search" placeholder="Search assets…"/>
+        <select id="browse-category">
           <option value="">All categories</option>
         </select>
       </div>
@@ -128,18 +98,18 @@
       <h1>Not authorized</h1>
       <p>This email address isn't on your account's authorized list.</p>
       <p class="muted">Ask your Reflect Co rep to add your email, or use the email address they have on file for you.</p>
-      <button class="ghost" onclick="portalAuth.signOut()">Try a different email</button>
+      <button id="denied-signout-btn" class="ghost">Try a different email</button>
     </div>
   </div>
 </section>
 
-<div id="upload-modal" class="modal hide" onclick="portalUpload.close(event)">
-  <div class="modal-body" onclick="event.stopPropagation()" style="max-width:520px">
-    <button class="modal-close" onclick="portalUpload.close()" aria-label="Close">&times;</button>
+<div id="upload-modal" class="modal hide">
+  <div class="modal-body" data-stop-prop style="max-width:520px">
+    <button id="upload-modal-close" class="modal-close" aria-label="Close">&times;</button>
     <div style="padding:28px 28px 16px">
       <h1 style="margin:0 0 8px;font-size:20px">Upload to media portal</h1>
       <p class="muted" style="margin:0 0 16px;font-size:13px">Files go straight into the shared Materials storage. Everyone who's authorized on the portal sees them within a few seconds.</p>
-      <form onsubmit="event.preventDefault(); portalUpload.submit();">
+      <form id="upload-form">
         <label for="upload-category">Category</label>
         <select id="upload-category" required>
           <option value="">— pick one —</option>
@@ -153,12 +123,12 @@
   </div>
 </div>
 
-<div id="preview-modal" class="modal hide" onclick="portalBrowse.closePreview(event)">
-  <div class="modal-body" onclick="event.stopPropagation()">
-    <button class="modal-close" onclick="portalBrowse.closePreview()" aria-label="Close">&times;</button>
+<div id="preview-modal" class="modal hide">
+  <div class="modal-body" data-stop-prop>
+    <button id="preview-close-x" class="modal-close" aria-label="Close">&times;</button>
     <div id="preview-content"></div>
     <div class="modal-actions">
-      <button class="ghost" onclick="portalBrowse.closePreview()">Close</button>
+      <button id="preview-close-btn" class="ghost">Close</button>
       <button class="primary" id="preview-download">Download</button>
     </div>
   </div>

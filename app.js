@@ -486,21 +486,25 @@ const portalBrowse = {
 
   async download(path, filename) {
     try {
-      /* Log first — a failed log is better than an unlogged download. */
-      try { await sb.rpc('portal_record_download', { p_asset_path: path }); }
-      catch (e) { console.warn('[portal] download log failed:', e); }
-
-      /* Signed URL with { download: filename } — Supabase replies with
-         Content-Disposition: attachment; filename=... so the browser
-         saves the file instead of opening it in the current tab. The
-         bare `a.download` attribute is ignored by Chrome/Firefox on
-         cross-origin resources without an attachment header. 1-hour
-         TTL is more than enough for a single download. */
+      /* Sign URL FIRST — if it fails, we abort before logging a false
+         download. Signed URL with { download: filename } makes Supabase
+         reply with Content-Disposition: attachment; filename=... so the
+         browser saves the file instead of opening inline. 1-hour TTL
+         is more than enough for a single download. */
       const sr = await sb.storage.from(CFG.MATERIALS_BUCKET)
         .createSignedUrl(path, 3600, { download: filename });
       if (sr.error || !sr.data?.signedUrl) {
         throw sr.error || new Error('No signed URL');
       }
+
+      /* Then log, then click. A failed log is still better than an
+         unlogged download (per the original design), so a thrown log
+         doesn't block the click. The only remaining false-positive is
+         if the browser crashes between click() and the download
+         completing — unavoidable without a server-side proxy. */
+      try { await sb.rpc('portal_record_download', { p_asset_path: path }); }
+      catch (e) { console.warn('[portal] download log failed:', e); }
+
       const a = document.createElement('a');
       a.href = sr.data.signedUrl;
       a.download = filename;
@@ -609,5 +613,48 @@ const portalUpload = {
   }
 };
 
+/* ================= DOM wiring =================
+   Every event listener bound here instead of inline onclick/onchange
+   attributes in index.html, so the CSP can forbid script-src
+   'unsafe-inline' — any future stored XSS can't execute inline. The
+   handlers themselves are unchanged. */
+function bindDomHandlers() {
+  const on = (id, event, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, fn);
+  };
+
+  on('upload-btn',          'click',  () => portalUpload.open());
+  on('signout-btn',         'click',  () => portalAuth.signOut());
+  on('denied-signout-btn',  'click',  () => portalAuth.signOut());
+
+  on('signin-form',         'submit', (e) => { e.preventDefault(); portalAuth.sendMagicLink(); });
+  on('upload-form',         'submit', (e) => { e.preventDefault(); portalUpload.submit(); });
+
+  on('browse-category',     'change', () => portalBrowse.render());
+  /* browse-search debounce + oninput is attached in portalBrowse._bindActions
+     at load-time; nothing to do here. */
+
+  /* Upload modal — backdrop click closes, body click stops propagation. */
+  on('upload-modal',        'click',  (e) => portalUpload.close(e));
+  on('upload-modal-close',  'click',  () => portalUpload.close());
+
+  /* Preview modal — same pattern. */
+  on('preview-modal',       'click',  (e) => portalBrowse.closePreview(e));
+  on('preview-close-x',     'click',  () => portalBrowse.closePreview());
+  on('preview-close-btn',   'click',  () => portalBrowse.closePreview());
+
+  /* Any element with data-stop-prop (the two modal-bodies) stops its
+     own clicks from reaching the backdrop. */
+  document.querySelectorAll('[data-stop-prop]').forEach(el => {
+    el.addEventListener('click', (e) => e.stopPropagation());
+  });
+}
+
 /* Boot */
-portalAuth.boot();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => { bindDomHandlers(); portalAuth.boot(); });
+} else {
+  bindDomHandlers();
+  portalAuth.boot();
+}
