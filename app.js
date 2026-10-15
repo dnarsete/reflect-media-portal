@@ -233,6 +233,29 @@ const portalBrowse = {
       );
       portalBrowse._files = results.flat();
 
+      /* Batch-sign every file once at load time so thumbnails render
+         synchronously inside _cardHTML. 1-hour TTL covers typical
+         sessions; click-time actions (preview/download/viewOffice)
+         re-sign fresh. The materials bucket is private, so there is
+         no permanent public URL — signed URLs are the only way in,
+         which closes the leak where DevTools could read a public URL
+         out of the Office viewer iframe's `src`. */
+      if (portalBrowse._files.length) {
+        try {
+          const paths = portalBrowse._files.map(f => f.path);
+          const { data: signed, error } = await sb.storage
+            .from(CFG.MATERIALS_BUCKET)
+            .createSignedUrls(paths, 3600);
+          if (!error && Array.isArray(signed)) {
+            const byPath = Object.create(null);
+            signed.forEach(s => { if (s && s.path) byPath[s.path] = s.signedUrl; });
+            portalBrowse._files.forEach(f => { f._signedUrl = byPath[f.path] || ''; });
+          }
+        } catch (e) {
+          console.warn('[portal] batch sign failed:', e);
+        }
+      }
+
       const catSel = document.getElementById('browse-category');
       if (catSel.options.length <= 1) {
         CFG.PORTAL_CATEGORIES.forEach(c => {
@@ -283,7 +306,11 @@ const portalBrowse = {
     const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
     const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
     const isOffice = ['pptx', 'ppt', 'docx', 'doc', 'xlsx', 'xls'].includes(ext);
-    const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(f.path).data.publicUrl;
+    /* _signedUrl was populated by load() via batch createSignedUrls.
+       If sign-time failed for some reason the thumb falls back to a
+       placeholder — click-time actions re-sign fresh so the file is
+       still viewable/downloadable. */
+    const url = f._signedUrl || '';
     const kb = f.metadata?.size
       ? (f.metadata.size < 1024 * 1024
         ? (f.metadata.size / 1024).toFixed(0) + ' KB'
@@ -292,14 +319,21 @@ const portalBrowse = {
 
     let thumb;
     if (isImage) {
-      thumb = `<img src="${esc(url)}" alt="${esc(f.name)}" loading="lazy"/>`;
+      thumb = url ? `<img src="${esc(url)}" alt="${esc(f.name)}" loading="lazy"/>` : `<div class="placeholder">🖼</div>`;
     } else if (isVideo) {
-      thumb = `<video src="${esc(url)}#t=0.5" muted preload="metadata"></video><div class="asset-play">▶</div>`;
+      thumb = url ? `<video src="${esc(url)}#t=0.5" muted preload="metadata"></video><div class="asset-play">▶</div>` : `<div class="placeholder">🎬</div>`;
     } else if (isOffice) {
-      /* Office files preview inline via Microsoft's viewer so the thumb
-         shows the first page, same as the CRM materials grid. */
-      const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
-      thumb = `<iframe src="${esc(officeUrl)}" style="width:100%;height:100%;border:0;pointer-events:none;background:#fff" loading="lazy" title="${esc(f.name)}"></iframe>`;
+      /* Office files preview inline via Microsoft's viewer. Microsoft
+         fetches the pptx from the url we hand it. With the bucket
+         private + signed URLs, the viewer src still works for 1 hour
+         then expires — DevTools users can't share the url later and
+         can't reach the file after the window closes. */
+      if (url) {
+        const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+        thumb = `<iframe src="${esc(officeUrl)}" style="width:100%;height:100%;border:0;pointer-events:none;background:#fff" loading="lazy" title="${esc(f.name)}"></iframe>`;
+      } else {
+        thumb = `<div class="placeholder">📄</div>`;
+      }
     } else {
       thumb = `<div class="placeholder">📎</div>`;
     }
@@ -340,12 +374,20 @@ const portalBrowse = {
     </div>`;
   },
 
-  openPreview(path, name, category) {
+  async openPreview(path, name, category) {
     const ext = (name.split('.').pop() || '').toLowerCase();
     const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
     const isImage = ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext);
     const isPdf = ext === 'pdf';
-    const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
+    /* Fresh signed URL at click time — 1-hour TTL covers any realistic
+       preview session and we don't rely on the possibly-stale URL
+       cached on the file row. */
+    const sr = await sb.storage.from(CFG.MATERIALS_BUCKET).createSignedUrl(path, 3600);
+    if (sr.error || !sr.data?.signedUrl) {
+      alert('Could not open preview: ' + (sr.error?.message || 'no url'));
+      return;
+    }
+    const url = sr.data.signedUrl;
     const content = document.getElementById('preview-content');
 
     let media;
@@ -415,10 +457,16 @@ const portalBrowse = {
 
   /* Open an Office file in a new tab via Microsoft's viewer. No
      download, no save-to-disk — the file is viewable but not
-     distributable from the portal. */
-  viewOffice(path) {
-    const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path).data.publicUrl;
-    const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
+     distributable from the portal. Fresh signed URL at click time,
+     1-hour TTL. After the window closes (or 1 hour, whichever is
+     sooner) the url is dead; DevTools users can no longer share it. */
+  async viewOffice(path) {
+    const sr = await sb.storage.from(CFG.MATERIALS_BUCKET).createSignedUrl(path, 3600);
+    if (sr.error || !sr.data?.signedUrl) {
+      alert('Could not open file: ' + (sr.error?.message || 'no url'));
+      return;
+    }
+    const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(sr.data.signedUrl)}`;
     window.open(officeUrl, '_blank', 'noopener,noreferrer');
   },
 
@@ -442,14 +490,19 @@ const portalBrowse = {
       try { await sb.rpc('portal_record_download', { p_asset_path: path }); }
       catch (e) { console.warn('[portal] download log failed:', e); }
 
-      /* { download: filename } tells Supabase to send
+      /* Signed URL with { download: filename } — Supabase replies with
          Content-Disposition: attachment; filename=... so the browser
          saves the file instead of opening it in the current tab. The
          bare `a.download` attribute is ignored by Chrome/Firefox on
-         cross-origin resources without an attachment header. */
-      const url = sb.storage.from(CFG.MATERIALS_BUCKET).getPublicUrl(path, { download: filename }).data.publicUrl;
+         cross-origin resources without an attachment header. 1-hour
+         TTL is more than enough for a single download. */
+      const sr = await sb.storage.from(CFG.MATERIALS_BUCKET)
+        .createSignedUrl(path, 3600, { download: filename });
+      if (sr.error || !sr.data?.signedUrl) {
+        throw sr.error || new Error('No signed URL');
+      }
       const a = document.createElement('a');
-      a.href = url;
+      a.href = sr.data.signedUrl;
       a.download = filename;
       a.rel = 'noopener';
       document.body.appendChild(a);
