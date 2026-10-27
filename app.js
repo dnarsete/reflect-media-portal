@@ -234,18 +234,20 @@ const portalBrowse = {
       portalBrowse._files = results.flat();
 
       /* Batch-sign every file once at load time so thumbnails render
-         synchronously inside _cardHTML. 1-hour TTL covers typical
-         sessions; click-time actions (preview/download/viewOffice)
-         re-sign fresh. The materials bucket is private, so there is
-         no permanent public URL — signed URLs are the only way in,
-         which closes the leak where DevTools could read a public URL
-         out of the Office viewer iframe's `src`. */
+         synchronously inside _cardHTML. 24-hour TTL (was 1h) so a day-
+         long portal session doesn't go blank mid-day — reps keeping
+         the portal open during a prospecting day used to see every
+         thumbnail silently 403 at the 60-minute mark. Click-time
+         actions still re-sign fresh so even if the batch URL expires
+         the download/preview buttons work. The materials bucket is
+         private, so there is no permanent public URL — signed URLs
+         are the only way in. */
       if (portalBrowse._files.length) {
         try {
           const paths = portalBrowse._files.map(f => f.path);
           const { data: signed, error } = await sb.storage
             .from(CFG.MATERIALS_BUCKET)
-            .createSignedUrls(paths, 3600);
+            .createSignedUrls(paths, 86400);
           if (!error && Array.isArray(signed)) {
             const byPath = Object.create(null);
             signed.forEach(s => { if (s && s.path) byPath[s.path] = s.signedUrl; });
@@ -323,17 +325,15 @@ const portalBrowse = {
     } else if (isVideo) {
       thumb = url ? `<video src="${esc(url)}#t=0.5" muted preload="metadata"></video><div class="asset-play">▶</div>` : `<div class="placeholder">🎬</div>`;
     } else if (isOffice) {
-      /* Office files preview inline via Microsoft's viewer. Microsoft
-         fetches the pptx from the url we hand it. With the bucket
-         private + signed URLs, the viewer src still works for 1 hour
-         then expires — DevTools users can't share the url later and
-         can't reach the file after the window closes. */
-      if (url) {
-        const officeUrl = `https://view.officeapps.live.com/op/view.aspx?src=${encodeURIComponent(url)}`;
-        thumb = `<iframe src="${esc(officeUrl)}" style="width:100%;height:100%;border:0;pointer-events:none;background:#fff" loading="lazy" title="${esc(f.name)}"></iframe>`;
-      } else {
-        thumb = `<div class="placeholder">📄</div>`;
-      }
+      /* Office thumbnails render as a plain icon instead of embedding
+         Microsoft's Office Online Viewer iframe. The viewer loaded its
+         own "Save" button inside the iframe that fires an
+         oauth.officeapps.live.com OAuth popup on click, and 10+ office
+         files in the grid used to spawn 10+ concurrent cross-origin
+         viewer loads at page open. Preview and Download buttons on the
+         card still work via the signed URL — Microsoft is out of the
+         thumbnail path. Same change as the CRM Materials grid. */
+      thumb = `<div class="placeholder">📄</div>`;
     } else {
       thumb = `<div class="placeholder">📎</div>`;
     }
